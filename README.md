@@ -21,6 +21,3 @@ A Python tool for batch converting `.wav` files to `.mp3` format. This script us
 
 ## Configuration
 The script saves the folder paths in a `settings.json` file for future use. If no configuration is found, the user will be prompted to select the folders again. If a configuration exists, the user can choose whether to use it or specify new folders.
-
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
