@@ -3,20 +3,41 @@ import os
 import sys
 import tkinter as tk
 from tkinter import filedialog
-
-from pydub import AudioSegment
+import subprocess
+import re
 
 def load_converted_files(log_file):
     if not os.path.exists(log_file):
+        with open(log_file, 'w'):
+            pass
         return set()
     with open(log_file) as file:
         return set(line.strip() for line in file)
 
-
 def save_converted_file(log_file, file_path):
+    base_name = os.path.basename(file_path)
     with open(log_file, 'a') as file:
-        file.write(file_path + '\n')
+        file.write(base_name + '\n')
 
+def detect_silence_ffmpeg(input_file, silence_threshold=-30, min_silence_duration=60):
+    print(f"Detecting silence in {input_file} using ffmpeg...")
+
+    command = [
+        "ffmpeg", "-i", input_file, "-af",
+        f"silencedetect=noise={silence_threshold}dB:d={min_silence_duration}",
+        "-f", "null", "-"
+    ]
+
+    process = subprocess.run(command, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True)
+    output = process.stderr
+
+    silence_segments = []
+    for match in re.finditer(r"silence_start: (\d+\.\d+)", output):
+        silence_start = float(match.group(1))
+        silence_segments.append(silence_start)
+
+    print(f"Detected {len(silence_segments)} silence points using ffmpeg.")
+    return silence_segments
 
 def convert_wav_to_mp3(input_folder, output_folder, log_file='converted_files.txt'):
     if not os.path.isdir(input_folder):
@@ -35,27 +56,44 @@ def convert_wav_to_mp3(input_folder, output_folder, log_file='converted_files.tx
             if file_name.endswith('.wav'):
                 found_files = True
                 wav_path = os.path.join(root, file_name)
-                mp3_name = f"{os.path.splitext(file_name)[0]}.mp3"
-                mp3_path = os.path.join(output_folder, mp3_name)
+                base_name = os.path.splitext(file_name)[0]
 
-                if mp3_path in converted_files:
-                    print(f"Skipping already converted file: {mp3_name}")
+                if base_name in converted_files:
+                    print(f"Skipping already converted file: {wav_path}")
                     continue
 
                 try:
-                    print(f"Converting {wav_path} to {mp3_path}...")
-                    sound = AudioSegment.from_wav(wav_path)
-                    sound.export(mp3_path, format="mp3")
+                    print(f"Processing {wav_path}...")
 
-                    save_converted_file(log_file, mp3_path)
-                    print(f"Successfully converted and saved: {mp3_path}")
+                    silence_points = detect_silence_ffmpeg(wav_path)
+
+                    if len(silence_points) == 0:
+                        mp3_path = os.path.join(output_folder, f"{base_name}.mp3")
+                        print(f"Exporting full audio to {mp3_path}...")
+                        subprocess.run(["ffmpeg", "-i", wav_path, "-b:a", "64k", mp3_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        print(f"Successfully converted and saved: {mp3_path}")
+                    else:
+                        prev_time = 0
+                        for idx, start_time in enumerate(silence_points):
+                            segment_path = os.path.join(output_folder, f"{base_name}_part{idx+1}.mp3")
+
+                            print(f"Exporting segment {idx+1} (from {prev_time}s to {start_time}s) to {segment_path}...")
+                            subprocess.run(["ffmpeg", "-i", wav_path, "-ss", str(prev_time), "-to", str(start_time), "-b:a", "64k", segment_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            print(f"Saved segment {idx+1} as {segment_path}")
+                            prev_time = start_time
+
+                        final_segment_path = os.path.join(output_folder, f"{base_name}_part{len(silence_points)+1}.mp3")
+                        print(f"Exporting final segment (from {prev_time}s to end) to {final_segment_path}...")
+                        subprocess.run(["ffmpeg", "-i", wav_path, "-ss", str(prev_time), "-b:a", "64k", final_segment_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        print(f"Saved final segment as {final_segment_path}")
+
+                    save_converted_file(log_file, wav_path)
 
                 except Exception as e:
-                    print(f"Failed to convert {wav_path}. Error: {e}")
+                    print(f"Failed to process {wav_path}. Error: {e}")
 
     if not found_files:
         print("No .wav files found in the input folder.")
-
 
 def select_folder(folder_type):
     root = tk.Tk()
@@ -72,21 +110,19 @@ def select_folder(folder_type):
         print("No folder selected")
         sys.exit()
 
-
 def check_existing_config():
-    if os.path.exists("settings.json"):
-        with open("settings.json", 'r') as file:
-            saved_settings = json.load(file)
-    else:
-        saved_settings = {}
-    return saved_settings
+    if not os.path.exists("settings.json"):
+        with open("settings.json", 'w') as file:
+            json.dump({}, file)
+        return {}
 
+    with open("settings.json", 'r') as file:
+        return json.load(file)
 
 def save_settings(input_folder_to_save, output_folder_to_save):
     settings_to_save = {"input": input_folder_to_save, "output": output_folder_to_save}
-    with open("settings.json", 'a', encoding='utf-8') as file:
+    with open("settings.json", 'w', encoding='utf-8') as file:
         json.dump(settings_to_save, file, indent=4)
-
 
 if __name__ == "__main__":
     settings = check_existing_config()
