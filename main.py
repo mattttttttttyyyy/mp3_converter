@@ -58,7 +58,7 @@ def convert_wav_to_mp3(input_folder, output_folder, log_file='converted_files.tx
                 wav_path = os.path.join(root, file_name)
                 base_name = os.path.splitext(file_name)[0]
 
-                if base_name in converted_files:
+                if base_name + ".wav" in converted_files:
                     print(f"Skipping already converted file: {wav_path}")
                     continue
 
